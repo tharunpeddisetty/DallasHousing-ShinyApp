@@ -1,0 +1,148 @@
+---
+title: "HousingDataAssignment"
+runtime: shiny
+output: html_document
+---
+
+```{r}
+#Run this block only if pacman is not installed
+#install.packages("pacman")
+```
+
+
+```{r}
+# Installing and Loading the Required Libraries
+pacman::p_load(shiny,tidyverse,sqldf,leaflet,readr,htmltools)
+```
+
+```{r}
+# Added missing data from online recourses and saved a new data file in GitHub
+#Loading the updated File from GitHub Repository
+urlfile="https://raw.githubusercontent.com/tharunpeddisetty/HousingData/master/Housing_2020V1.csv"
+data<-read_csv(url(urlfile))
+data <- subset(data, PROPERTY.TYPE == "Single Family Residential" | PROPERTY.TYPE == "Townhouse")
+```
+
+```{r}
+#Data Pre-Processing
+#Imputing the Null Values with Median in Lot Size
+data$LOT.SIZE[is.na(data$LOT.SIZE)] <- median(data$LOT.SIZE, na.rm=TRUE)
+#Removing 3 records with Beds=0 becasue they are misleading
+data <- data[!(data$BEDS==0),]
+```
+
+```{r}
+#Defining UI and Server for the Shiny App
+
+# Define UI for application that plots features of movies ----
+ui <- fluidPage(
+    
+    # Sidebar layout with a input and output definitions ----
+        tabsetPanel(
+        
+        # Sidebar panel for inputs ----
+        tabPanel("Histogram",
+            
+            # Input: Select variable for y-axis ----
+            selectInput(inputId = "Zipcode",
+                        label = "Choose atleast One ZipCode",
+                        choices = c(sort(data$ZIP.OR.POSTAL.CODE)), selected = 75001,multiple=TRUE
+                        ),
+            plotOutput(outputId = "Histogram")
+        ),
+        
+        tabPanel("Median Home Price",
+                 tableOutput(outputId = 'table')
+                 ),
+        tabPanel("BoxPlot",
+                 sliderInput(inputId = "beds",
+                             label = "Choose Beds",
+                             min = min(data$BEDS), max = max(data$BEDS),
+                             value = min(data$BEDS), step=1),
+                 
+                 sliderInput(inputId = "baths",
+                             label = "Choose Baths",
+                             min = min(data$BATHS,na.rm = TRUE), max = max(data$BATHS,na.rm = TRUE),
+                             value = min(data$BATHS,na.rm = TRUE), step=0.5),
+                 
+                 sliderInput(inputId = "sqft",
+                             label = "Choose Square Feet",
+                             min = min(data$SQUARE.FEET,na.rm = TRUE), max = max(data$SQUARE.FEET,na.rm = TRUE),
+                             value = min(data$SQUARE.FEET,na.rm = TRUE), step=1),
+                 
+                 sliderInput(inputId = "lotsize",
+                             label = "Choose Lot Size",
+                             min = min(data$LOT.SIZE,na.rm = TRUE), max = max(data$LOT.SIZE,na.rm = TRUE),
+                             value = min(data$LOT.SIZE,na.rm = TRUE), step=1),
+                 
+                 sliderInput(inputId = "year",
+                             label = "Choose Built Year",
+                             min = min(data$YEAR.BUILT,na.rm = TRUE), max = max(data$YEAR.BUILT,na.rm = TRUE),
+                             value = min(data$YEAR.BUILT,na.rm = TRUE), step=1),
+                 
+                 plotOutput(outputId = "boxplot")
+                 
+                 ),
+        tabPanel("Map",
+                 leafletOutput(outputId = "map")
+                 )
+    )
+)
+    
+    # Define server logic required to draw a scatterplot ----
+    server <- function(input, output) {
+        
+        # Create histogram object the plotOutput function is expecting ----
+        output$Histogram <- renderPlot({
+            Price <- data$PRICE[data$ZIP.OR.POSTAL.CODE==input$Zipcode] 
+            hist(Price, 
+                 main=paste('Histogram of House Prices in ZipCode: ',input$Zipcode),
+                 xlab="Price of Houses",
+                 ylab="Number of Houses",
+                 col = 'lightblue',
+                 border='black')
+        })
+        
+        #Create table object
+        output$table <-renderTable({
+            #SQL statement for fetching required data
+            
+            
+            singleFamily = sqldf("Select [ZIP.OR.POSTAL.CODE] as 'ZipCode', Median(PRICE) as 'Single Family Residential' from data 
+           where [PROPERTY.TYPE] == 'Single Family Residential' group by ZipCode order by Median(PRICE) desc ")
+            
+            townhouse = sqldf("Select [ZIP.OR.POSTAL.CODE] as 'ZipCode', Median(PRICE) as 'Townhouse' from data 
+           where [PROPERTY.TYPE] == 'Townhouse' group by ZipCode")
+            
+            df2 = sqldf("Select s.ZipCode, [Single Family Residential], t.Townhouse from singleFamily as s left join townhouse as t using(ZipCode)
+                        UNION ALL
+                        Select t.ZipCode, [Single Family Residential], t.Townhouse from townhouse as t left join singleFamily as s using(ZipCode)
+                        where s.ZipCode is NULL")
+            
+        })
+        
+        #Create a box plot object for Tab-3
+        output$boxplot <- renderPlot({
+            subset_data = subset(data,BEDS>=input$beds & BATHS>=input$baths & SQUARE.FEET >= input$sqft
+                                 & LOT.SIZE>=input$lotsize & YEAR.BUILT>=input$year)
+            boxplot(subset_data$PRICE/10000000, title="Price Distribution of the Houses in $M",ylab="Price in $M",
+                    na.action=FALSE)
+        })
+        
+        #Create a map object for Tab-4
+        output$map <- renderLeaflet({
+            data <- data%>%mutate(popup_info=paste("Price:","$",PRICE,"||",
+                                                   "Beds:",BEDS,"||","Baths:",BATHS,"||",
+                                                   "Square Feet:",SQUARE.FEET,"||",
+                                                   "Lot Size:",LOT.SIZE,"||","Built Year:",YEAR.BUILT))
+                                                   
+            
+            leaflet(height = "100%")%>%addTiles()%>% #provider=providers$Stadia.Outdoors,options = providerTileOptions(noWrap = TRUE) for choosing various map styles
+                addMarkers(data=data,lng=~LONGITUDE,lat=~LATITUDE,label = ~popup_info)
+        })
+    }
+    
+    # Create a Shiny app object
+    shinyApp(ui = ui, server = server)
+```
+
